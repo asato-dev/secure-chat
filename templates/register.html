@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>新規登録 — SecureChat</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0e1a; --surface: #111827; --border: #1e2d45;
+      --accent: #00d4ff; --accent2: #7c3aed;
+      --text: #e2e8f0; --muted: #64748b;
+      --error: #f87171; --success: #34d399;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: 'Noto Sans JP', sans-serif;
+      min-height: 100vh; display: flex;
+      align-items: center; justify-content: center;
+    }
+    body::before {
+      content: ''; position: fixed; inset: 0;
+      background-image:
+        linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+      background-size: 40px 40px; pointer-events: none;
+    }
+    .container {
+      width: 100%; max-width: 420px; padding: 2rem;
+      position: relative; z-index: 1;
+      animation: fadeUp 0.6s ease both;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .logo { text-align: center; margin-bottom: 2.5rem; }
+    .logo-icon {
+      width: 52px; height: 52px;
+      background: linear-gradient(135deg, var(--accent2), var(--accent));
+      border-radius: 14px; display: inline-flex;
+      align-items: center; justify-content: center;
+      font-size: 1.5rem; margin-bottom: 1rem;
+      box-shadow: 0 0 32px rgba(0,212,255,0.2);
+    }
+    .logo h1 {
+      font-family: 'JetBrains Mono', monospace; font-size: 1.4rem;
+      font-weight: 600; letter-spacing: 0.05em;
+      background: linear-gradient(135deg, var(--accent), #a78bfa);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .logo p { font-size: 0.8rem; color: var(--muted); margin-top: 0.3rem; font-family: 'JetBrains Mono', monospace; }
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 16px; padding: 2rem;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.4);
+    }
+    .card-title {
+      font-size: 1rem; font-weight: 500; margin-bottom: 1.5rem;
+      display: flex; align-items: center; gap: 0.5rem;
+    }
+    .card-title::before {
+      content: ''; display: block; width: 3px; height: 1rem;
+      background: linear-gradient(to bottom, var(--accent), var(--accent2));
+      border-radius: 2px;
+    }
+    .field { margin-bottom: 1.2rem; }
+    label {
+      display: block; font-size: 0.75rem;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--muted); margin-bottom: 0.4rem;
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    input {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 0.75rem 1rem; color: var(--text);
+      font-size: 0.9rem; font-family: 'JetBrains Mono', monospace;
+      transition: border-color 0.2s, box-shadow 0.2s; outline: none;
+    }
+    input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,212,255,0.1); }
+    .btn {
+      width: 100%; padding: 0.85rem;
+      background: linear-gradient(135deg, var(--accent2), var(--accent));
+      border: none; border-radius: 8px; color: #fff;
+      font-size: 0.9rem; font-weight: 500; cursor: pointer;
+      margin-top: 0.5rem; transition: opacity 0.2s, transform 0.1s;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .msg {
+      margin-top: 1rem; padding: 0.7rem 1rem; border-radius: 8px;
+      font-size: 0.82rem; font-family: 'JetBrains Mono', monospace; display: none;
+    }
+    .msg.error   { background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.3); color: var(--error); display: block; }
+    .msg.success { background: rgba(52,211,153,0.1);  border: 1px solid rgba(52,211,153,0.3);  color: var(--success); display: block; }
+    .footer-link { text-align: center; margin-top: 1.5rem; font-size: 0.82rem; color: var(--muted); }
+    .footer-link a { color: var(--accent); text-decoration: none; }
+    .key-info {
+      margin-top: 1rem; padding: 0.7rem 1rem; border-radius: 8px;
+      font-size: 0.75rem; font-family: 'JetBrains Mono', monospace;
+      background: rgba(0,212,255,0.05); border: 1px solid rgba(0,212,255,0.1);
+      color: var(--muted); display: none;
+    }
+    .key-info.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">
+      <div class="logo-icon">🔐</div>
+      <h1>SecureChat</h1>
+      <p>End-to-End Encrypted Chat</p>
+    </div>
+    <div class="card">
+      <div class="card-title">新規登録</div>
+      <div class="field">
+        <label>Username</label>
+        <input type="text" id="username" placeholder="ユーザー名を入力">
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="password" placeholder="パスワードを入力">
+      </div>
+      <button class="btn" id="btn" onclick="register()">アカウントを作成</button>
+      <div class="key-info" id="keyInfo">🔑 RSA-2048鍵ペアを生成中...</div>
+      <div id="msg" class="msg"></div>
+    </div>
+    <div class="footer-link">
+      既にアカウントをお持ちの方は <a href="/login">ログイン</a>
+    </div>
+  </div>
+
+  <script src="/static/crypto.js"></script>
+  <script>
+    async function register() {
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value.trim();
+      const btn      = document.getElementById('btn');
+      const msg      = document.getElementById('msg');
+      const keyInfo  = document.getElementById('keyInfo');
+
+      msg.className = 'msg';
+      if (!username || !password) {
+        msg.className = 'msg error';
+        msg.textContent = 'ユーザー名とパスワードを入力してください';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = '処理中...';
+      keyInfo.className = 'key-info show';
+      keyInfo.textContent = '🔑 RSA-2048鍵ペアを生成中...';
+
+      try {
+        // ブラウザ側でRSA鍵ペアを生成
+        const { publicKeyPem, privateKeyJwk } = await generateRSAKeyPair();
+
+        keyInfo.textContent = '💾 秘密鍵をこのデバイスに保存中...';
+
+        // 秘密鍵をlocalStorageに保存（サーバーには送らない）
+        savePrivateKey(privateKeyJwk);
+
+        keyInfo.textContent = '📡 公開鍵をサーバーに登録中...';
+
+        // 公開鍵とユーザー情報をサーバーに送信
+        const res = await fetch('/api/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password, public_key: publicKeyPem }),
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          keyInfo.textContent = '✅ 登録完了！秘密鍵はこのデバイスにのみ保存されました';
+          msg.className = 'msg success';
+          msg.textContent = '登録成功！ログインページへ移動します...';
+          setTimeout(() => window.location.href = '/login', 1500);
+        } else {
+          keyInfo.className = 'key-info';
+          msg.className = 'msg error';
+          msg.textContent = data.error || '登録に失敗しました';
+          btn.disabled = false;
+          btn.textContent = 'アカウントを作成';
+        }
+      } catch (e) {
+        msg.className = 'msg error';
+        msg.textContent = 'エラーが発生しました: ' + e.message;
+        btn.disabled = false;
+        btn.textContent = 'アカウントを作成';
+      }
+    }
+  </script>
+</body>
+</html>

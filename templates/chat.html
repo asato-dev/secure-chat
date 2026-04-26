@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SecureChat</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0e1a; --surface: #111827; --surface2: #162032;
+      --border: #1e2d45; --accent: #00d4ff; --accent2: #7c3aed;
+      --text: #e2e8f0; --muted: #64748b;
+      --error: #f87171; --success: #34d399;
+      --bubble-me: #1a2744; --bubble-other: #162032;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: 'Noto Sans JP', sans-serif;
+      height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+    }
+
+    /* ヘッダー */
+    header {
+      background: rgba(10,14,26,0.95); backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 1.2rem; height: 56px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .logo {
+      display: flex; align-items: center; gap: 0.5rem;
+      font-family: 'JetBrains Mono', monospace; font-size: 0.95rem; font-weight: 600;
+      background: linear-gradient(135deg, var(--accent), #a78bfa);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .logo-icon {
+      width: 28px; height: 28px;
+      background: linear-gradient(135deg, var(--accent2), var(--accent));
+      border-radius: 7px; display: flex; align-items: center;
+      justify-content: center; font-size: 0.8rem;
+    }
+    .header-right { display: flex; align-items: center; gap: 0.8rem; }
+    .user-badge {
+      font-size: 0.75rem; font-family: 'JetBrains Mono', monospace;
+      color: var(--muted); background: var(--surface);
+      border: 1px solid var(--border); border-radius: 20px; padding: 0.25rem 0.7rem;
+    }
+    .btn-logout {
+      font-size: 0.75rem; font-family: 'JetBrains Mono', monospace;
+      color: var(--muted); background: none; border: 1px solid var(--border);
+      border-radius: 6px; padding: 0.3rem 0.7rem; cursor: pointer;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    .btn-logout:hover { color: var(--error); border-color: var(--error); }
+
+    /* メインレイアウト */
+    .main {
+      display: flex; flex: 1; overflow: hidden;
+    }
+
+    /* サイドバー（ユーザーリスト） */
+    .sidebar {
+      width: 240px; flex-shrink: 0;
+      background: var(--surface); border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .sidebar-header {
+      padding: 0.8rem 1rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.7rem; font-family: 'JetBrains Mono', monospace;
+      color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    .user-list { flex: 1; overflow-y: auto; }
+    .user-item {
+      padding: 0.8rem 1rem; cursor: pointer;
+      display: flex; align-items: center; gap: 0.6rem;
+      transition: background 0.15s; border-bottom: 1px solid rgba(30,45,69,0.5);
+    }
+    .user-item:hover { background: var(--surface2); }
+    .user-item.active { background: rgba(0,212,255,0.06); border-left: 2px solid var(--accent); }
+    .avatar {
+      width: 32px; height: 32px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent2), var(--accent));
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.8rem; font-weight: 600; flex-shrink: 0;
+    }
+    .user-name { font-size: 0.85rem; font-weight: 500; }
+
+    /* チャットエリア */
+    .chat-area {
+      flex: 1; display: flex; flex-direction: column; overflow: hidden;
+    }
+    .chat-header {
+      padding: 0.8rem 1.2rem; border-bottom: 1px solid var(--border);
+      background: var(--surface); display: flex; align-items: center;
+      justify-content: space-between; flex-shrink: 0;
+    }
+    .chat-partner {
+      display: flex; align-items: center; gap: 0.6rem;
+      font-size: 0.9rem; font-weight: 500;
+    }
+    .e2e-badge {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      font-size: 0.65rem; font-family: 'JetBrains Mono', monospace;
+      color: var(--accent); background: rgba(0,212,255,0.06);
+      border: 1px solid rgba(0,212,255,0.15); border-radius: 20px;
+      padding: 0.2rem 0.6rem;
+    }
+    .messages {
+      flex: 1; overflow-y: auto; padding: 1rem 1.2rem;
+      display: flex; flex-direction: column; gap: 0.6rem;
+    }
+    .message {
+      display: flex; flex-direction: column; max-width: 72%;
+      animation: fadeUp 0.3s ease both;
+    }
+    .message.mine { align-self: flex-end; align-items: flex-end; }
+    .message.other { align-self: flex-start; align-items: flex-start; }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .bubble {
+      padding: 0.65rem 0.9rem; border-radius: 12px;
+      font-size: 0.88rem; line-height: 1.5; word-break: break-word;
+    }
+    .message.mine  .bubble { background: var(--bubble-me);    border: 1px solid rgba(0,212,255,0.15); border-bottom-right-radius: 4px; }
+    .message.other .bubble { background: var(--bubble-other); border: 1px solid var(--border);         border-bottom-left-radius: 4px; }
+    .bubble.decrypting { color: var(--muted); font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; }
+    .meta {
+      font-size: 0.65rem; font-family: 'JetBrains Mono', monospace;
+      color: var(--muted); margin-top: 0.2rem;
+      display: flex; align-items: center; gap: 0.4rem;
+    }
+    .lock-icon { color: rgba(0,212,255,0.5); }
+
+    /* 入力エリア */
+    .input-area {
+      padding: 0.8rem 1.2rem; border-top: 1px solid var(--border);
+      background: var(--surface); display: flex; gap: 0.6rem; align-items: flex-end;
+      flex-shrink: 0;
+    }
+    textarea {
+      flex: 1; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 10px; padding: 0.6rem 0.9rem; color: var(--text);
+      font-size: 0.88rem; font-family: 'Noto Sans JP', sans-serif;
+      resize: none; outline: none; max-height: 120px;
+      transition: border-color 0.2s;
+    }
+    textarea:focus { border-color: var(--accent); }
+    textarea::placeholder { color: var(--muted); }
+    .send-btn {
+      padding: 0.6rem 1.2rem;
+      background: linear-gradient(135deg, var(--accent2), var(--accent));
+      border: none; border-radius: 8px; color: #fff;
+      font-size: 0.85rem; cursor: pointer; flex-shrink: 0;
+      transition: opacity 0.2s;
+    }
+    .send-btn:hover { opacity: 0.9; }
+    .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* 空状態・プレースホルダー */
+    .empty-chat {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 1rem; color: var(--muted);
+    }
+    .empty-chat .icon { font-size: 2.5rem; opacity: 0.3; }
+    .empty-chat p { font-size: 0.85rem; font-family: 'JetBrains Mono', monospace; }
+
+    /* スクロールバー */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    @media (max-width: 600px) {
+      .sidebar { width: 60px; }
+      .sidebar-header { display: none; }
+      .user-name { display: none; }
+      .user-item { justify-content: center; padding: 0.8rem 0; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🔐</div>
+      SecureChat
+    </div>
+    <div class="header-right">
+      <span class="user-badge" id="myName">...</span>
+      <button class="btn-logout" onclick="logout()">ログアウト</button>
+    </div>
+  </header>
+
+  <div class="main">
+
+    <!-- サイドバー -->
+    <div class="sidebar">
+      <div class="sidebar-header">// users</div>
+      <div class="user-list" id="userList">
+        <div style="padding:1rem;font-size:0.75rem;color:var(--muted);font-family:monospace;">読み込み中...</div>
+      </div>
+    </div>
+
+    <!-- チャットエリア -->
+    <div class="chat-area" id="chatArea">
+      <div class="empty-chat" id="emptyState">
+        <div class="icon">💬</div>
+        <p>左のリストからチャット相手を選んでください</p>
+        <p style="font-size:0.7rem;margin-top:0.3rem;">🔒 全メッセージはE2E暗号化されます</p>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/static/crypto.js"></script>
+  <script>
+    let myId         = null;
+    let partnerId    = null;
+    let partnerName  = null;
+    let pollInterval = null;
+
+    // ================================================================
+    // 初期化
+    // ================================================================
+    async function init() {
+      const res  = await fetch('/api/me');
+      const me   = await res.json();
+      myId       = me.id;
+      document.getElementById('myName').textContent = me.username;
+      loadUsers();
+    }
+
+    // ================================================================
+    // ユーザーリストの読み込み
+    // ================================================================
+    async function loadUsers() {
+      const res   = await fetch('/api/users');
+      const users = await res.json();
+      const list  = document.getElementById('userList');
+
+      if (users.length === 0) {
+        list.innerHTML = '<div style="padding:1rem;font-size:0.75rem;color:var(--muted);font-family:monospace;">他のユーザーがいません</div>';
+        return;
+      }
+
+      list.innerHTML = users.map(u => `
+        <div class="user-item" id="user-${u.id}" onclick="selectPartner(${u.id}, '${u.username}')">
+          <div class="avatar">${u.username[0].toUpperCase()}</div>
+          <div class="user-name">${u.username}</div>
+        </div>
+      `).join('');
+    }
+
+    // ================================================================
+    // チャット相手を選択
+    // ================================================================
+    function selectPartner(id, name) {
+      partnerId   = id;
+      partnerName = name;
+
+      // アクティブ状態を更新
+      document.querySelectorAll('.user-item').forEach(el => el.classList.remove('active'));
+      document.getElementById(`user-${id}`).classList.add('active');
+
+      // チャットUIを構築
+      document.getElementById('chatArea').innerHTML = `
+        <div class="chat-header">
+          <div class="chat-partner">
+            <div class="avatar">${name[0].toUpperCase()}</div>
+            ${name}
+          </div>
+          <span class="e2e-badge">🔒 E2E暗号化</span>
+        </div>
+        <div class="messages" id="messages"></div>
+        <div class="input-area">
+          <textarea id="msgInput" placeholder="メッセージを入力（Enterで送信）" rows="1"
+            oninput="autoResize(this)"></textarea>
+          <button class="send-btn" id="sendBtn" onclick="sendMessage()">送信</button>
+        </div>
+      `;
+
+      document.getElementById('msgInput').addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+
+      // 既存メッセージを読み込み
+      loadMessages();
+
+      // ポーリング（3秒ごとに新着確認）
+      if (pollInterval) clearInterval(pollInterval);
+      pollInterval = setInterval(loadMessages, 3000);
+    }
+
+    // ================================================================
+    // メッセージ一覧の読み込み・復号
+    // ================================================================
+    async function loadMessages() {
+      if (!partnerId) return;
+      const res      = await fetch(`/api/messages/${partnerId}`);
+      const messages = await res.json();
+      const container = document.getElementById('messages');
+      if (!container) return;
+
+      const wasAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
+
+      container.innerHTML = '';
+
+      for (const m of messages) {
+        const div   = document.createElement('div');
+        div.className = `message ${m.is_mine ? 'mine' : 'other'}`;
+
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble decrypting';
+        bubble.textContent = '🔓 復号中...';
+
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.innerHTML = `<span class="lock-icon">🔒</span> ${formatDate(m.created_at)}`;
+
+        div.appendChild(bubble);
+        div.appendChild(meta);
+        container.appendChild(div);
+
+        // 非同期で復号
+        decryptMessage(m, bubble);
+      }
+
+      if (wasAtBottom) {
+        container.scrollTop = container.scrollHeight;
+      }
+    }
+
+    async function decryptMessage(m, bubble) {
+      try {
+        const plaintext = await hybridDecrypt(m.content, m.encrypted_key);
+        bubble.className = 'bubble';
+        bubble.textContent = plaintext;
+      } catch (e) {
+        bubble.className = 'bubble';
+        bubble.style.color = 'var(--muted)';
+        bubble.textContent = '（このデバイスでは復号できません）';
+      }
+    }
+
+    // ================================================================
+    // メッセージ送信
+    // ================================================================
+    async function sendMessage() {
+      const input   = document.getElementById('msgInput');
+      const sendBtn = document.getElementById('sendBtn');
+      const text    = input.value.trim();
+      if (!text || !partnerId) return;
+
+      sendBtn.disabled = true;
+
+      try {
+        // 受信者の公開鍵を取得
+        const keyRes    = await fetch(`/api/users/${partnerId}/public-key`);
+        const keyData   = await keyRes.json();
+
+        // ハイブリッド暗号化（ブラウザ側で実行）
+        const { content, encrypted_key } = await hybridEncrypt(text, keyData.public_key);
+
+        // 暗号化済みデータをサーバーに送信
+        const res = await fetch('/api/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ receiver_id: partnerId, content, encrypted_key }),
+        });
+
+        if (res.ok) {
+          input.value = '';
+          input.style.height = 'auto';
+          loadMessages();
+        }
+      } catch (e) {
+        alert('送信に失敗しました: ' + e.message);
+      } finally {
+        sendBtn.disabled = false;
+      }
+    }
+
+    // ================================================================
+    // ユーティリティ
+    // ================================================================
+    async function logout() {
+      if (pollInterval) clearInterval(pollInterval);
+      await fetch('/api/logout', { method: 'POST' });
+      window.location.href = '/login';
+    }
+
+    function formatDate(str) {
+      const d = new Date(str);
+      return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    }
+
+    function autoResize(el) {
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+    }
+
+    init();
+  </script>
+</body>
+</html>
