@@ -53,24 +53,35 @@ def init_db():
     """)
 
     # メッセージテーブル
-    # sender_id:     送信者
-    # receiver_id:   受信者
-    # content:       AES-256-CBCで暗号化されたメッセージ本文
-    #                フォーマット: Base64( IV[16byte] + 暗号文 )
-    # encrypted_key: 受信者のRSA公開鍵で暗号化されたAES鍵
-    #                フォーマット: Base64( RSA-OAEP(AES鍵[32byte]) )
+    # sender_id:                送信者
+    # receiver_id:              受信者
+    # content:                  AES-256-CBCで暗号化されたメッセージ本文
+    #                           フォーマット: Base64( IV[16byte] + 暗号文 )
+    # encrypted_key:            受信者のRSA公開鍵で暗号化されたAES鍵
+    #                           フォーマット: Base64( RSA-OAEP(AES鍵[32byte]) )
+    # encrypted_key_for_sender: 送信者のRSA公開鍵で暗号化されたAES鍵
+    #                           送信者が自分のメッセージを復号するために使用
     # → サーバーは暗号化されたデータを保存するだけで中身を読めない
     cur.execute("""
         CREATE TABLE IF NOT EXISTS messages (
-            id            SERIAL PRIMARY KEY,
-            sender_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            receiver_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            content       TEXT    NOT NULL,
-            encrypted_key TEXT    NOT NULL,
-            created_at    TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            id                     SERIAL PRIMARY KEY,
+            sender_id              INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            receiver_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            content                TEXT    NOT NULL,
+            encrypted_key          TEXT    NOT NULL,
+            encrypted_key_for_sender TEXT,
+            created_at             TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
     """)
 
+    # 既存テーブルへの列追加（IF NOT EXISTSは列追加に使えないためtry/exceptで対応）
+    # 注意: これは開発用の簡易対応です。
+    #       本番環境では alembic などのマイグレーションツールを使用してください。
+    try:
+        cur.execute("ALTER TABLE messages ADD COLUMN encrypted_key_for_sender TEXT;")
+        conn.commit()
+    except Exception:
+        conn.rollback()  # 既に列が存在する場合は無視する
     conn.commit()
     cur.close()
     conn.close()

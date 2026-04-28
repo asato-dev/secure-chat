@@ -14,13 +14,30 @@ app.py - エンドツーエンド暗号化チャットアプリ
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 from functools import wraps
 from database import init_db, get_db
+from datetime import timedelta
 
 import os
 import bcrypt
 import psycopg2
+import logging
+
+# ログ設定（エラーの記録）
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "super-secret-key-change-in-production")
+
+# 問題1修正: SECRET_KEY が設定されていない場合はアプリを起動しない
+_secret_key = os.environ.get("SECRET_KEY")
+if not _secret_key:
+    raise RuntimeError("環境変数 SECRET_KEY が設定されていません。起動できません。")
+app.secret_key = _secret_key
+
+# 問題2修正: セッションの有効期限を2時間に設定
+app.permanent_session_lifetime = timedelta(hours=2)
 
 with app.app_context():
     init_db()
@@ -102,6 +119,7 @@ def register():
         return jsonify({"error": "このユーザー名は既に使われています"}), 400
     except Exception as e:
         conn.rollback()
+        logger.error("register error: %s", e)  # 問題8修正: エラーをログに記録
         return jsonify({"error": "登録に失敗しました"}), 500
     finally:
         conn.close()
@@ -123,6 +141,8 @@ def login():
     if not user or not check_password(password, user["password"]):
         return jsonify({"error": "ユーザー名またはパスワードが違います"}), 401
 
+    # 問題2修正: permanent=True でセッション有効期限を適用する
+    session.permanent  = True
     session["user_id"]  = user["id"]
     session["username"] = user["username"]
     return jsonify({"message": "ログイン成功"})
@@ -200,6 +220,7 @@ def get_messages(partner_id):
             m.receiver_id,
             m.content,
             m.encrypted_key,
+            m.encrypted_key_for_sender,
             m.created_at,
             u.username AS sender_name
         FROM messages m
@@ -218,14 +239,15 @@ def get_messages(partner_id):
     conn.close()
 
     return jsonify([{
-        "id":            m["id"],
-        "sender_id":     m["sender_id"],
-        "receiver_id":   m["receiver_id"],
-        "content":       m["content"],       # 暗号化済み本文
-        "encrypted_key": m["encrypted_key"], # 暗号化済みAES鍵
-        "created_at":    str(m["created_at"]),
-        "sender_name":   m["sender_name"],
-        "is_mine":       m["sender_id"] == session["user_id"],
+        "id":                      m["id"],
+        "sender_id":               m["sender_id"],
+        "receiver_id":             m["receiver_id"],
+        "content":                 m["content"],
+        "encrypted_key":           m["encrypted_key"],
+        "encrypted_key_for_sender": m["encrypted_key_for_sender"],
+        "created_at":              str(m["created_at"]),
+        "sender_name":             m["sender_name"],
+        "is_mine":                 m["sender_id"] == session["user_id"],
     } for m in messages])
 
 
@@ -243,10 +265,11 @@ def send_message():
         content:       AES-CBCで暗号化されたメッセージ本文
         encrypted_key: 受信者の公開鍵でRSA暗号化されたAES鍵
     """
-    data          = request.get_json()
-    receiver_id   = data.get("receiver_id")
-    content       = data.get("content",       "").strip()
-    encrypted_key = data.get("encrypted_key", "").strip()
+    data                  = request.get_json()
+    receiver_id           = data.get("receiver_id")
+    content               = data.get("content",                "").strip()
+    encrypted_key         = data.get("encrypted_key",          "").strip()
+    encrypted_key_for_sender = data.get("encrypted_key_for_sender", "").strip()
 
     if not receiver_id or not content or not encrypted_key:
         return jsonify({"error": "データが不足しています"}), 400
@@ -254,9 +277,9 @@ def send_message():
     conn = get_db()
     cur  = conn.cursor()
     cur.execute(
-        "INSERT INTO messages (sender_id, receiver_id, content, encrypted_key)"
-        " VALUES (%s, %s, %s, %s)",
-        (session["user_id"], receiver_id, content, encrypted_key)
+        "INSERT INTO messages (sender_id, receiver_id, content, encrypted_key, encrypted_key_for_sender)"
+        " VALUES (%s, %s, %s, %s, %s)",
+        (session["user_id"], receiver_id, content, encrypted_key, encrypted_key_for_sender or None)
     )
     conn.commit()
     cur.close()
@@ -272,6 +295,32 @@ def get_me():
         "id":       session["user_id"],
         "username": session["username"],
     })
+
+
+@app.route("/api/account", methods=["DELETE"])
+@login_required
+def delete_account():
+    """
+    自分のアカウントを削除する API。
+
+    users テーブルの CASCADE 設定により、
+    関連するメッセージも自動的に削除される。
+    削除後はセッションをクリアする。
+    """
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM users WHERE id=%s", (session["user_id"],))
+        conn.commit()
+        cur.close()
+        session.clear()
+        return jsonify({"message": "アカウントを削除しました"})
+    except Exception as e:
+        conn.rollback()
+        logger.error("delete_account error: %s", e)  # 問題8修正: エラーをログに記録
+        return jsonify({"error": "削除に失敗しました"}), 500
+    finally:
+        conn.close()
 
 
 # ================================================================

@@ -153,10 +153,10 @@ async function aesDecrypt(encryptedBase64, aesKey) {
 // ================================================================
 
 /**
- * AES鍵を受信者のRSA公開鍵で暗号化する。
+ * AES鍵をRSA公開鍵で暗号化する。
  *
  * @param {Uint8Array} aesKey - 32byteのAES鍵
- * @param {CryptoKey} publicKey - 受信者のRSA公開鍵
+ * @param {CryptoKey} publicKey - RSA公開鍵
  * @returns {string} Base64エンコードされた暗号化AES鍵
  */
 async function encryptAESKey(aesKey, publicKey) {
@@ -191,30 +191,41 @@ async function decryptAESKey(encryptedKeyBase64, privateKey) {
 // ================================================================
 
 /**
- * メッセージをハイブリッド暗号化する。
+ * メッセージをハイブリッド暗号化する（送信者・受信者の両方に対応）。
+ *
+ * 【重要】AES鍵は1つだけ生成し、受信者用と送信者用の両方の公開鍵で
+ * 同じAES鍵を暗号化する。こうすることで：
+ *   - 受信者は encrypted_key         を自分の秘密鍵で復号して本文を読める
+ *   - 送信者は encrypted_key_for_sender を自分の秘密鍵で復号して本文を読める
  *
  * 流れ:
  *   ① AES鍵（32byte）をランダム生成
- *   ② メッセージをAES-CBCで暗号化
- *   ③ AES鍵を受信者のRSA公開鍵で暗号化
- *   ④ 暗号化メッセージと暗号化AES鍵を返す
+ *   ② メッセージをAES-CBCで暗号化（content）
+ *   ③ 同じAES鍵を受信者の公開鍵で暗号化（encrypted_key）
+ *   ④ 同じAES鍵を送信者自身の公開鍵でも暗号化（encrypted_key_for_sender）
+ *   ⑤ content / encrypted_key / encrypted_key_for_sender を返す
  *
- * @param {string} plaintext - 平文メッセージ
- * @param {string} receiverPublicKeyPem - 受信者のRSA公開鍵（PEM形式）
- * @returns {{ content: string, encrypted_key: string }}
+ * @param {string} plaintext              - 平文メッセージ
+ * @param {string} receiverPublicKeyPem   - 受信者のRSA公開鍵（PEM形式）
+ * @param {string} senderPublicKeyPem     - 送信者自身のRSA公開鍵（PEM形式）
+ * @returns {{ content: string, encrypted_key: string, encrypted_key_for_sender: string }}
  */
-async function hybridEncrypt(plaintext, receiverPublicKeyPem) {
-  // ① メッセージごとにランダムなAES鍵を生成
+async function hybridEncrypt(plaintext, receiverPublicKeyPem, senderPublicKeyPem) {
+  // ① メッセージごとにランダムなAES鍵を1つだけ生成
   const aesKey = crypto.getRandomValues(new Uint8Array(32));
 
-  // ② AES-CBCでメッセージを暗号化
+  // ② 同じAES鍵でメッセージを暗号化（contentは1つ）
   const content = await aesEncrypt(plaintext, aesKey);
 
-  // ③ 受信者の公開鍵でAES鍵を暗号化
-  const publicKey     = await importPublicKey(receiverPublicKeyPem);
-  const encrypted_key = await encryptAESKey(aesKey, publicKey);
+  // ③ 受信者の公開鍵で同じAES鍵を暗号化
+  const receiverPublicKey = await importPublicKey(receiverPublicKeyPem);
+  const encrypted_key     = await encryptAESKey(aesKey, receiverPublicKey);
 
-  return { content, encrypted_key };
+  // ④ 送信者自身の公開鍵でも同じAES鍵を暗号化
+  const senderPublicKey          = await importPublicKey(senderPublicKeyPem);
+  const encrypted_key_for_sender = await encryptAESKey(aesKey, senderPublicKey);
+
+  return { content, encrypted_key, encrypted_key_for_sender };
 }
 
 /**
@@ -224,8 +235,8 @@ async function hybridEncrypt(plaintext, receiverPublicKeyPem) {
  *   ① localStorageの秘密鍵でAES鍵を復号
  *   ② AES鍵でメッセージを復号
  *
- * @param {string} content - 暗号化されたメッセージ本文
- * @param {string} encrypted_key - 暗号化されたAES鍵
+ * @param {string} content       - 暗号化されたメッセージ本文
+ * @param {string} encrypted_key - 暗号化されたAES鍵（自分宛のもの）
  * @returns {string} 復号された平文
  */
 async function hybridDecrypt(content, encrypted_key) {

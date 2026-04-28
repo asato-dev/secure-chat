@@ -53,6 +53,47 @@
       transition: color 0.2s, border-color 0.2s;
     }
     .btn-logout:hover { color: var(--error); border-color: var(--error); }
+    .btn-settings {
+      font-size: 0.75rem; font-family: 'JetBrains Mono', monospace;
+      color: var(--muted); background: none; border: 1px solid var(--border);
+      border-radius: 6px; padding: 0.3rem 0.7rem; cursor: pointer;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    .btn-settings:hover { color: var(--accent); border-color: var(--accent); }
+
+    /* モーダル */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);
+      z-index: 100; align-items: center; justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 16px; padding: 2rem; width: 320px;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+      animation: fadeUp 0.2s ease both;
+    }
+    .modal h2 {
+      font-size: 0.95rem; font-weight: 600; margin-bottom: 0.5rem;
+      display: flex; align-items: center; gap: 0.5rem;
+    }
+    .modal p { font-size: 0.82rem; color: var(--muted); margin-bottom: 1.5rem; line-height: 1.6; }
+    .modal-btns { display: flex; gap: 0.6rem; flex-direction: column; }
+    .btn-danger {
+      width: 100%; padding: 0.7rem;
+      background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.3);
+      border-radius: 8px; color: var(--error);
+      font-size: 0.85rem; cursor: pointer; transition: background 0.2s;
+    }
+    .btn-danger:hover { background: rgba(248,113,113,0.2); }
+    .btn-cancel {
+      width: 100%; padding: 0.7rem;
+      background: none; border: 1px solid var(--border);
+      border-radius: 8px; color: var(--muted);
+      font-size: 0.85rem; cursor: pointer; transition: background 0.2s;
+    }
+    .btn-cancel:hover { background: var(--surface2); }
 
     /* メインレイアウト */
     .main {
@@ -190,9 +231,22 @@
     </div>
     <div class="header-right">
       <span class="user-badge" id="myName">...</span>
+      <button class="btn-settings" onclick="openSettings()">設定</button>
       <button class="btn-logout" onclick="logout()">ログアウト</button>
     </div>
   </header>
+
+  <!-- 設定モーダル -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal">
+      <h2>⚙️ アカウント設定</h2>
+      <p>アカウントを削除すると、全てのメッセージも削除されます。この操作は取り消せません。</p>
+      <div class="modal-btns">
+        <button class="btn-danger" onclick="deleteAccount()">🗑 アカウントを削除する</button>
+        <button class="btn-cancel" onclick="closeSettings()">キャンセル</button>
+      </div>
+    </div>
+  </div>
 
   <div class="main">
 
@@ -246,12 +300,30 @@
         return;
       }
 
+      // 問題4修正: ユーザー名をHTMLに直接埋め込まず、data属性とescapeHtmlで安全に処理する
       list.innerHTML = users.map(u => `
-        <div class="user-item" id="user-${u.id}" onclick="selectPartner(${u.id}, '${u.username}')">
-          <div class="avatar">${u.username[0].toUpperCase()}</div>
-          <div class="user-name">${u.username}</div>
+        <div class="user-item" id="user-${u.id}" data-id="${u.id}">
+          <div class="avatar">${escapeHtml(u.username[0].toUpperCase())}</div>
+          <div class="user-name">${escapeHtml(u.username)}</div>
         </div>
       `).join('');
+
+      // クリックイベントはJSで設定する（onclickにユーザー名を埋め込まない）
+      users.forEach(u => {
+        const el = document.getElementById(`user-${u.id}`);
+        el.dataset.name = u.username; // data属性への代入は自動的に安全
+        el.addEventListener('click', () => selectPartner(u.id, el.dataset.name));
+      });
+    }
+
+    // 問題4修正: 特殊文字をHTMLとして解釈されないよう無害化する関数
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     }
 
     // ================================================================
@@ -260,6 +332,9 @@
     function selectPartner(id, name) {
       partnerId   = id;
       partnerName = name;
+
+      // 相手を切り替えたら描画済みIDをリセット
+      renderedIds.clear();
 
       // アクティブ状態を更新
       document.querySelectorAll('.user-item').forEach(el => el.classList.remove('active'));
@@ -298,8 +373,12 @@
     }
 
     // ================================================================
-    // メッセージ一覧の読み込み・復号
+    // メッセージ一覧の読み込み・復号（差分更新）
     // ================================================================
+
+    // 描画済みメッセージIDを記録（チャット相手切り替え時にリセット）
+    const renderedIds = new Set();
+
     async function loadMessages() {
       if (!partnerId) return;
       const res      = await fetch(`/api/messages/${partnerId}`);
@@ -309,11 +388,14 @@
 
       const wasAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
 
-      container.innerHTML = '';
-
+      // 新着のみ追記（全消去しないのでチカチカしない）
       for (const m of messages) {
-        const div   = document.createElement('div');
+        if (renderedIds.has(m.id)) continue;
+        renderedIds.add(m.id);
+
+        const div = document.createElement('div');
         div.className = `message ${m.is_mine ? 'mine' : 'other'}`;
+        div.dataset.id = m.id;
 
         const bubble = document.createElement('div');
         bubble.className = 'bubble decrypting';
@@ -327,7 +409,6 @@
         div.appendChild(meta);
         container.appendChild(div);
 
-        // 非同期で復号
         decryptMessage(m, bubble);
       }
 
@@ -338,7 +419,13 @@
 
     async function decryptMessage(m, bubble) {
       try {
-        const plaintext = await hybridDecrypt(m.content, m.encrypted_key);
+        // 自分が送信者なら encrypted_key_for_sender（自分の公開鍵で暗号化）を使う
+        // 受信者なら encrypted_key（自分の公開鍵で暗号化）を使う
+        // どちらも「自分の秘密鍵」で復号できる
+        const keyToUse = m.is_mine ? m.encrypted_key_for_sender : m.encrypted_key;
+        if (!keyToUse) throw new Error('復号キーなし');
+
+        const plaintext = await hybridDecrypt(m.content, keyToUse);
         bubble.className = 'bubble';
         bubble.textContent = plaintext;
       } catch (e) {
@@ -360,18 +447,29 @@
       sendBtn.disabled = true;
 
       try {
-        // 受信者の公開鍵を取得
-        const keyRes    = await fetch(`/api/users/${partnerId}/public-key`);
-        const keyData   = await keyRes.json();
+        // 受信者と自分の公開鍵を並行取得
+        const [receiverKeyRes, myKeyRes] = await Promise.all([
+          fetch(`/api/users/${partnerId}/public-key`),
+          fetch(`/api/users/${myId}/public-key`),
+        ]);
+        const receiverKeyData = await receiverKeyRes.json();
+        const myKeyData       = await myKeyRes.json();
 
-        // ハイブリッド暗号化（ブラウザ側で実行）
-        const { content, encrypted_key } = await hybridEncrypt(text, keyData.public_key);
+        // AES鍵を1つ生成し、受信者用と送信者用の両方の公開鍵で暗号化する
+        // （hybridEncryptを2回呼ぶと別々のAES鍵が生成されてしまうため1回で行う）
+        const { content, encrypted_key, encrypted_key_for_sender } =
+          await hybridEncrypt(text, receiverKeyData.public_key, myKeyData.public_key);
 
         // 暗号化済みデータをサーバーに送信
         const res = await fetch('/api/messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ receiver_id: partnerId, content, encrypted_key }),
+          body: JSON.stringify({
+            receiver_id: partnerId,
+            content,
+            encrypted_key,
+            encrypted_key_for_sender,
+          }),
         });
 
         if (res.ok) {
@@ -393,6 +491,25 @@
       if (pollInterval) clearInterval(pollInterval);
       await fetch('/api/logout', { method: 'POST' });
       window.location.href = '/login';
+    }
+
+    function openSettings() {
+      document.getElementById('settingsModal').classList.add('open');
+    }
+
+    function closeSettings() {
+      document.getElementById('settingsModal').classList.remove('open');
+    }
+
+    async function deleteAccount() {
+      const res = await fetch('/api/account', { method: 'DELETE' });
+      if (res.ok) {
+        // 秘密鍵もlocalStorageから削除
+        localStorage.removeItem('privateKey');
+        window.location.href = '/login';
+      } else {
+        alert('削除に失敗しました');
+      }
     }
 
     function formatDate(str) {

@@ -133,7 +133,8 @@
       document.getElementById('keyWarn').style.display = 'block';
     }
 
-    document.addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+    // 問題3修正: e.isComposing で日本語変換中のEnterを無視する
+    document.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) login(); });
 
     async function login() {
       const username = document.getElementById('username').value.trim();
