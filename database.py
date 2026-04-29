@@ -74,14 +74,6 @@ def init_db():
         );
     """)
 
-    # 既存テーブルへの列追加（IF NOT EXISTSは列追加に使えないためtry/exceptで対応）
-    # 注意: これは開発用の簡易対応です。
-    #       本番環境では alembic などのマイグレーションツールを使用してください。
-    try:
-        cur.execute("ALTER TABLE messages ADD COLUMN encrypted_key_for_sender TEXT;")
-        conn.commit()
-    except Exception:
-        conn.rollback()  # 既に列が存在する場合は無視する
     conn.commit()
     cur.close()
     conn.close()
