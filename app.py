@@ -30,13 +30,13 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# 問題1修正: SECRET_KEY が設定されていない場合はアプリを起動しない
+#SECRET_KEY が設定されていない場合はアプリを起動しない
 _secret_key = os.environ.get("SECRET_KEY")
 if not _secret_key:
     raise RuntimeError("環境変数 SECRET_KEY が設定されていません。起動できません。")
 app.secret_key = _secret_key
 
-# 問題2修正: セッションの有効期限を2時間に設定
+# セッションの有効期限を2時間に設定
 app.permanent_session_lifetime = timedelta(hours=2)
 
 with app.app_context():
