@@ -119,7 +119,7 @@ def register():
         return jsonify({"error": "このユーザー名は既に使われています"}), 400
     except Exception as e:
         conn.rollback()
-        logger.error("register error: %s", e)  # 問題8修正: エラーをログに記録
+        logger.error("register error: %s", e)  # エラーをログに記録
         return jsonify({"error": "登録に失敗しました"}), 500
     finally:
         conn.close()
@@ -141,7 +141,7 @@ def login():
     if not user or not check_password(password, user["password"]):
         return jsonify({"error": "ユーザー名またはパスワードが違います"}), 401
 
-    # 問題2修正: permanent=True でセッション有効期限を適用する
+    #permanent=True でセッション有効期限を適用する
     session.permanent  = True
     session["user_id"]  = user["id"]
     session["username"] = user["username"]
@@ -317,7 +317,7 @@ def delete_account():
         return jsonify({"message": "アカウントを削除しました"})
     except Exception as e:
         conn.rollback()
-        logger.error("delete_account error: %s", e)  # 問題8修正: エラーをログに記録
+        logger.error("delete_account error: %s", e)  #エラーをログに記録
         return jsonify({"error": "削除に失敗しました"}), 500
     finally:
         conn.close()
