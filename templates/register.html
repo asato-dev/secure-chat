@@ -118,10 +118,16 @@
       <div class="field">
         <label>Username</label>
         <input type="text" id="username" placeholder="ユーザー名を入力">
+        <div style="font-size:0.72rem;color:var(--muted);margin-top:0.4rem;font-family:'JetBrains Mono',monospace;">
+          英数字とアンダースコア（_）のみ使用できます
+        </div>
       </div>
       <div class="field">
         <label>Password</label>
         <input type="password" id="password" placeholder="パスワードを入力">
+        <div style="font-size:0.72rem;color:var(--muted);margin-top:0.4rem;font-family:'JetBrains Mono',monospace;">
+          8文字以上で入力してください
+        </div>
       </div>
       <button class="btn" id="btn" onclick="register()">アカウントを作成</button>
       <div class="key-info" id="keyInfo">🔑 RSA-2048鍵ペアを生成中...</div>
