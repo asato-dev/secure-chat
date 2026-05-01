@@ -17,6 +17,7 @@ from database import init_db, get_db
 from datetime import timedelta
 
 import os
+import re
 import bcrypt
 import psycopg2
 import logging
@@ -104,6 +105,9 @@ def register():
     if not username or not password or not public_key:
         return jsonify({"error": "全ての項目を入力してください"}), 400
 
+    if not re.match(r'^[a-zA-Z0-9_]+$', username):
+        return jsonify({"error": "ユーザー名は英数字とアンダースコアのみ使用できます"}), 400
+        
     conn = get_db()
     try:
         cur = conn.cursor()
@@ -295,6 +299,82 @@ def get_me():
         "id":       session["user_id"],
         "username": session["username"],
     })
+
+
+@app.route("/api/account/username", methods=["PUT"])
+@login_required
+def change_username():
+    """ユーザー名を変更する API。"""
+    data         = request.get_json()
+    new_username = data.get("username", "").strip()
+
+    if not new_username:
+        return jsonify({"error": "ユーザー名を入力してください"}), 400
+
+    if not re.match(r'^[a-zA-Z0-9_]+$', new_username):
+        return jsonify({"error": "ユーザー名は英数字とアンダースコアのみ使用できます"}), 400
+
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE users SET username=%s WHERE id=%s",
+            (new_username, session["user_id"])
+        )
+        conn.commit()
+        cur.close()
+        session["username"] = new_username
+        return jsonify({"message": "ユーザー名を変更しました"})
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        return jsonify({"error": "このユーザー名は既に使われています"}), 400
+    except Exception as e:
+        conn.rollback()
+        logger.error("change_username error: %s", e)
+        return jsonify({"error": "変更に失敗しました"}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/api/account/password", methods=["PUT"])
+@login_required
+def change_password():
+    """パスワードを変更する API。"""
+    data         = request.get_json()
+    old_password = data.get("old_password", "").strip()
+    new_password = data.get("new_password", "").strip()
+
+    if not old_password or not new_password:
+        return jsonify({"error": "全ての項目を入力してください"}), 400
+
+    if len(new_password) < 8:
+        return jsonify({"error": "新しいパスワードは8文字以上にしてください"}), 400
+
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT password FROM users WHERE id=%s", (session["user_id"],))
+        user = cur.fetchone()
+
+        if not check_password(old_password, user["password"]):
+            return jsonify({"error": "現在のパスワードが違います"}), 401
+
+        cur.execute(
+            "UPDATE users SET password=%s WHERE id=%s",
+            (hash_password(new_password), session["user_id"])
+        )
+        conn.commit()
+        cur.close()
+        return jsonify({"message": "パスワードを変更しました"})
+    except Exception as e:
+        conn.rollback()
+        logger.error("change_password error: %s", e)
+        return jsonify({"error": "変更に失敗しました"}), 500
+    finally:
+        conn.close()
+
+
+
 
 
 @app.route("/api/account", methods=["DELETE"])

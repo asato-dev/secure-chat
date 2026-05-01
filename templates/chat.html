@@ -80,6 +80,32 @@
     }
     .modal p { font-size: 0.82rem; color: var(--muted); margin-bottom: 1.5rem; line-height: 1.6; }
     .modal-btns { display: flex; gap: 0.6rem; flex-direction: column; }
+    .input-field {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 0.6rem 0.8rem; color: var(--text);
+      font-size: 0.82rem; font-family: 'JetBrains Mono', monospace;
+      outline: none; margin-bottom: 0.5rem; box-sizing: border-box;
+    }
+    .input-field:focus { border-color: var(--accent); }
+    .section-title {
+      font-size: 0.78rem; font-family: 'JetBrains Mono', monospace;
+      color: var(--muted); margin: 1rem 0 0.5rem;
+      padding-bottom: 0.4rem; border-bottom: 1px solid var(--border);
+    }
+    .btn-primary {
+      width: 100%; padding: 0.7rem;
+      background: linear-gradient(135deg, var(--accent2), var(--accent));
+      border: none; border-radius: 8px; color: #fff;
+      font-size: 0.85rem; cursor: pointer; transition: opacity 0.2s;
+      margin-bottom: 0.4rem;
+    }
+    .btn-primary:hover { opacity: 0.9; }
+    .modal-msg {
+      font-size: 0.75rem; font-family: 'JetBrains Mono', monospace;
+      padding: 0.4rem 0.6rem; border-radius: 6px; display: none; margin-bottom: 0.4rem;
+    }
+    .modal-msg.error   { background: rgba(248,113,113,0.1); color: var(--error); display: block; }
+    .modal-msg.success { background: rgba(52,211,153,0.1);  color: var(--success); display: block; }
     .btn-danger {
       width: 100%; padding: 0.7rem;
       background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.3);
@@ -235,18 +261,40 @@
       <button class="btn-logout" onclick="logout()">ログアウト</button>
     </div>
   </header>
+<!-- 設定モーダル -->
+<div class="modal-overlay" id="settingsModal">
+  <div class="modal" style="width:360px">
+    <h2>⚙️ アカウント設定</h2>
 
-  <!-- 設定モーダル -->
-  <div class="modal-overlay" id="settingsModal">
-    <div class="modal">
-      <h2>⚙️ アカウント設定</h2>
-      <p>アカウントを削除すると、全てのメッセージも削除されます。この操作は取り消せません。</p>
-      <div class="modal-btns">
-        <button class="btn-danger" onclick="deleteAccount()">🗑 アカウントを削除する</button>
-        <button class="btn-cancel" onclick="closeSettings()">キャンセル</button>
-      </div>
+    <!-- ユーザー名変更 -->
+    <div class="section-title">ユーザー名を変更</div>
+    <input class="input-field" type="text" id="newUsername" placeholder="新しいユーザー名">
+    <div style="font-size:0.7rem;color:var(--muted);margin-bottom:0.4rem;font-family:'JetBrains Mono',monospace;">
+      英数字とアンダースコア（_）のみ使用できます
+    </div>
+    <div class="modal-msg" id="usernameMsg"></div>
+    <button class="btn-primary" onclick="changeUsername()">ユーザー名を変更する</button>
+
+    <!-- パスワード変更 -->
+    <div class="section-title">パスワードを変更</div>
+    <input class="input-field" type="password" id="oldPassword" placeholder="現在のパスワード">
+    <input class="input-field" type="password" id="newPassword" placeholder="新しいパスワード（8文字以上）">
+    <div style="font-size:0.7rem;color:var(--muted);margin-bottom:0.4rem;font-family:'JetBrains Mono',monospace;">
+      8文字以上で入力してください
+    </div>
+    <div class="modal-msg" id="passwordMsg"></div>
+    <button class="btn-primary" onclick="changePassword()">パスワードを変更する</button>
+
+    <!-- アカウント削除 -->
+    <div class="section-title">危険な操作</div>
+    <p>アカウントを削除すると、全てのメッセージも削除されます。この操作は取り消せません。</p>
+    <div class="modal-btns">
+      <button class="btn-danger" onclick="deleteAccount()">🗑 アカウントを削除する</button>
+      <button class="btn-cancel" onclick="closeSettings()">閉じる</button>
     </div>
   </div>
+</div>
+
 
   <div class="main">
 
@@ -287,6 +335,14 @@
       loadUsers();
     }
 
+      // エスケープ関数
+    function escapeHtml(str) {
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+    }
     // ================================================================
     // ユーザーリストの読み込み
     // ================================================================
@@ -299,11 +355,9 @@
         list.innerHTML = '<div style="padding:1rem;font-size:0.75rem;color:var(--muted);font-family:monospace;">他のユーザーがいません</div>';
         return;
       }
-
-      // 問題4修正: ユーザー名をHTMLに直接埋め込まず、data属性とescapeHtmlで安全に処理する
       list.innerHTML = users.map(u => `
-        <div class="user-item" id="user-${u.id}" data-id="${u.id}">
-          <div class="avatar">${escapeHtml(u.username[0].toUpperCase())}</div>
+        <div class="user-item" id="user-${u.id}" onclick="selectPartner(${u.id}, '${escapeHtml(u.username)}')">
+          <div class="avatar">${escapeHtml(u.username)[0].toUpperCase()}</div>
           <div class="user-name">${escapeHtml(u.username)}</div>
         </div>
       `).join('');
@@ -499,6 +553,65 @@
 
     function closeSettings() {
       document.getElementById('settingsModal').classList.remove('open');
+    }
+
+    async function changeUsername() {
+      const newUsername = document.getElementById('newUsername').value.trim();
+      const msg = document.getElementById('usernameMsg');
+      msg.className = 'modal-msg';
+
+      if (!newUsername) {
+        msg.className = 'modal-msg error';
+        msg.textContent = 'ユーザー名を入力してください';
+        return;
+      }
+
+      const res = await fetch('/api/account/username', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: newUsername }),
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        msg.className = 'modal-msg success';
+        msg.textContent = data.message;
+        document.getElementById('myName').textContent = newUsername;
+        document.getElementById('newUsername').value = '';
+      } else {
+        msg.className = 'modal-msg error';
+        msg.textContent = data.error;
+      }
+    }
+
+    async function changePassword() {
+      const oldPassword = document.getElementById('oldPassword').value.trim();
+      const newPassword = document.getElementById('newPassword').value.trim();
+      const msg = document.getElementById('passwordMsg');
+      msg.className = 'modal-msg';
+
+      if (!oldPassword || !newPassword) {
+        msg.className = 'modal-msg error';
+        msg.textContent = '全ての項目を入力してください';
+        return;
+      }
+
+      const res = await fetch('/api/account/password', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        msg.className = 'modal-msg success';
+        msg.textContent = data.message;
+        document.getElementById('oldPassword').value = '';
+        document.getElementById('newPassword').value = '';
+      } else {
+        msg.className = 'modal-msg error';
+        msg.textContent = data.error;
+      }
     }
 
     async function deleteAccount() {
