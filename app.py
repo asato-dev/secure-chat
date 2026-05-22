@@ -116,11 +116,19 @@ def register():
     try:
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO users (username, password, public_key) VALUES (%s, %s, %s)",
+            "INSERT INTO users (username, password, public_key) VALUES (%s, %s, %s) RETURNING id",
             (username, hash_password(password), public_key)
         )
+        new_user = cur.fetchone()
         conn.commit()
         cur.close()
+
+        # 登録直後にセッションを作成する
+        # これにより直後の /api/account/encrypted-key PUT が認証を通過できる
+        session.permanent = True
+        session["user_id"]  = new_user["id"]
+        session["username"] = username
+
         return jsonify({"message": "登録成功"})
     except psycopg2.errors.UniqueViolation:
         conn.rollback()
