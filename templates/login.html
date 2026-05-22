@@ -118,29 +118,24 @@
       </div>
       <button class="btn" id="btn" onclick="login()">ログイン</button>
       <div id="msg" class="msg"></div>
-      <div class="warn" id="keyWarn" style="display:none">
-        ⚠️ このデバイスに秘密鍵が見つかりません。登録時と異なるデバイスの場合、メッセージを復号できません。
-      </div>
+      <!-- v2: localStorageに秘密鍵がなくてもバックアップから復元できるため警告は不要になった -->
     </div>
     <div class="footer-link">
       アカウントをお持ちでない方は <a href="/register">新規登録</a>
     </div>
   </div>
 
+  <!-- v2追加: PBKDF2による秘密鍵復元のためcrypto.jsを読み込む -->
+  <script src="/static/crypto.js"></script>
   <script>
-    // 秘密鍵の有無を確認して警告表示
-    if (!localStorage.getItem('privateKey')) {
-      document.getElementById('keyWarn').style.display = 'block';
-    }
-
-    // 問題3修正: e.isComposing で日本語変換中のEnterを無視する
+    // e.isComposing で日本語変換中のEnterを無視する
     document.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) login(); });
 
     async function login() {
       const username = document.getElementById('username').value.trim();
       const password = document.getElementById('password').value.trim();
-      const btn = document.getElementById('btn');
-      const msg = document.getElementById('msg');
+      const btn      = document.getElementById('btn');
+      const msg      = document.getElementById('msg');
 
       msg.className = 'msg';
       if (!username || !password) {
@@ -153,7 +148,7 @@
       btn.textContent = '認証中...';
 
       try {
-        const res = await fetch('/api/login', {
+        const res  = await fetch('/api/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username, password }),
@@ -163,6 +158,40 @@
         if (res.ok) {
           msg.className = 'msg success';
           msg.textContent = 'ログイン成功！';
+
+          // ---- v2追加: localStorageに秘密鍵がない場合はサーバーから復元する ----
+          // !localStorage.getItem(...) → 秘密鍵が存在しない場合はtrue
+          // 機種変更・キャッシュ削除後のログインで自動的に復元される
+          if (!localStorage.getItem('privateKey')) {
+            try {
+              msg.textContent = 'ログイン成功！秘密鍵を復元中...';
+
+              // サーバーから暗号化済み秘密鍵を取得
+              const keyRes  = await fetch('/api/account/encrypted-key');
+              const keyData = await keyRes.json();
+
+              // encrypted_keyが存在する場合のみ復元する
+              // （旧バージョンのアカウントはnullが返る）
+              if (keyData.encrypted_key) {
+                // パスワードからPBKDF2でAES鍵を再現してRSA秘密鍵を復号する
+                // 同じパスワード + 暗号文内のSalt → 必ず同じAES鍵が再現される
+                const privateKeyJwk = await decryptPrivateKeyWithPassword(
+                  keyData.encrypted_key,
+                  password  // ユーザーが入力したパスワード（平文）
+                );
+
+                // 復元したRSA秘密鍵をlocalStorageに保存
+                localStorage.setItem('privateKey', JSON.stringify(privateKeyJwk));
+                msg.textContent = 'ログイン成功！秘密鍵を復元しました';
+              }
+            } catch (e) {
+              // 復元に失敗してもログイン自体は成功しているため続行する
+              // パスワードが違う場合やバックアップがない場合にここに来る
+              console.warn('秘密鍵の復元に失敗しました:', e);
+            }
+          }
+          // ---- v2追加ここまで ----
+
           setTimeout(() => window.location.href = '/', 600);
         } else {
           msg.className = 'msg error';

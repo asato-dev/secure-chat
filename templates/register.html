@@ -171,7 +171,7 @@
         keyInfo.textContent = '📡 公開鍵をサーバーに登録中...';
 
         // 公開鍵とユーザー情報をサーバーに送信
-        const res = await fetch('/api/register', {
+        const res  = await fetch('/api/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username, password, public_key: publicKeyPem }),
@@ -179,7 +179,23 @@
         const data = await res.json();
 
         if (res.ok) {
-          keyInfo.textContent = '✅ 登録完了！秘密鍵はこのデバイスにのみ保存されました';
+          // ---- v2追加: PBKDF2でRSA秘密鍵を暗号化してサーバーにバックアップ ----
+          keyInfo.textContent = '🔒 秘密鍵をパスワードで暗号化してバックアップ中...';
+
+          // ログインパスワードから派生した鍵でRSA秘密鍵を暗号化する
+          // encryptPrivateKeyWithPassword はcrypto.jsに追加したPBKDF2関数
+          const encryptedBase64 = await encryptPrivateKeyWithPassword(privateKeyJwk, password);
+
+          // 暗号化済み秘密鍵をサーバーに保存
+          // サーバーはパスワードも派生鍵も知らないため中身を読めない
+          await fetch('/api/account/encrypted-key', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ encrypted_key: encryptedBase64 }),
+          });
+          // ---- v2追加ここまで ----
+
+          keyInfo.textContent = '✅ 登録完了！秘密鍵はこのデバイスとサーバーに安全に保存されました';
           msg.className = 'msg success';
           msg.textContent = '登録成功！ログインページへ移動します...';
           setTimeout(() => window.location.href = '/login', 1500);
