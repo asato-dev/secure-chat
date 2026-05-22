@@ -3,12 +3,16 @@ app.py - エンドツーエンド暗号化チャットアプリ
 
 設計方針:
     - RSA鍵ペアはブラウザ側で生成（Web Crypto API）
-    - 秘密鍵はブラウザのlocalStorageのみに保存（サーバーに送らない）
+    - 秘密鍵はlocalStorageに保存し、さらにPBKDF2でサーバーにバックアップ（v2）
     - 公開鍵はサーバーに登録
     - メッセージの暗号化・復号はブラウザ側で行う
     - サーバーは暗号化されたデータの保存・転送のみ担当
 
     → サーバー管理者でもメッセージを読めない（エンドツーエンド暗号化）
+
+v1からの変更点:
+    - AES-CBC → AES-GCM（crypto.js側の変更）
+    - /api/account/encrypted-key エンドポイントを追加（秘密鍵バックアップ用）
 """
 
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for
@@ -107,7 +111,7 @@ def register():
 
     if not re.match(r'^[a-zA-Z0-9_]+$', username):
         return jsonify({"error": "ユーザー名は英数字とアンダースコアのみ使用できます"}), 400
-        
+
     conn = get_db()
     try:
         cur = conn.cursor()
@@ -123,7 +127,7 @@ def register():
         return jsonify({"error": "このユーザー名は既に使われています"}), 400
     except Exception as e:
         conn.rollback()
-        logger.error("register error: %s", e)  # エラーをログに記録
+        logger.error("register error: %s", e)
         return jsonify({"error": "登録に失敗しました"}), 500
     finally:
         conn.close()
@@ -266,7 +270,7 @@ def send_message():
 
     受け取るデータ:
         receiver_id:   受信者のユーザーID
-        content:       AES-CBCで暗号化されたメッセージ本文
+        content:       AES-GCMで暗号化されたメッセージ本文
         encrypted_key: 受信者の公開鍵でRSA暗号化されたAES鍵
     """
     data                  = request.get_json()
@@ -300,6 +304,10 @@ def get_me():
         "username": session["username"],
     })
 
+
+# ================================================================
+# アカウント API
+# ================================================================
 
 @app.route("/api/account/username", methods=["PUT"])
 @login_required
@@ -374,7 +382,59 @@ def change_password():
         conn.close()
 
 
+@app.route("/api/account/encrypted-key", methods=["PUT"])
+@login_required
+def save_encrypted_key():
+    """
+    ログインパスワードから派生した鍵で暗号化されたRSA秘密鍵を
+    サーバーに保存するAPI。（v2新機能）
 
+    サーバーはパスワードも派生鍵も知らないため、中身を読めない。
+    フォーマット: Base64( Salt[16byte] + IV[12byte] + 暗号文 )
+    """
+    data          = request.get_json()
+    encrypted_key = data.get("encrypted_key", "").strip()
+
+    if not encrypted_key:
+        return jsonify({"error": "データが不足しています"}), 400
+
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE users SET encrypted_private_key=%s WHERE id=%s",
+            (encrypted_key, session["user_id"])
+        )
+        conn.commit()
+        cur.close()
+        return jsonify({"message": "秘密鍵をバックアップしました"})
+    except Exception as e:
+        conn.rollback()
+        logger.error("save_encrypted_key error: %s", e)
+        return jsonify({"error": "保存に失敗しました"}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/api/account/encrypted-key", methods=["GET"])
+@login_required
+def get_encrypted_key():
+    """
+    暗号化されたRSA秘密鍵をサーバーから取得するAPI。（v2新機能）
+
+    機種変更後のログイン時にブラウザが呼び出す。
+    サーバーは暗号化されたデータを返すだけで中身は読めない。
+    """
+    conn = get_db()
+    cur  = conn.cursor()
+    cur.execute(
+        "SELECT encrypted_private_key FROM users WHERE id=%s",
+        (session["user_id"],)
+    )
+    user = cur.fetchone()
+    cur.close()
+    conn.close()
+    return jsonify({"encrypted_key": user["encrypted_private_key"]})
 
 
 @app.route("/api/account", methods=["DELETE"])
@@ -397,7 +457,7 @@ def delete_account():
         return jsonify({"message": "アカウントを削除しました"})
     except Exception as e:
         conn.rollback()
-        logger.error("delete_account error: %s", e)  #エラーをログに記録
+        logger.error("delete_account error: %s", e)
         return jsonify({"error": "削除に失敗しました"}), 500
     finally:
         conn.close()

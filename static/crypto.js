@@ -3,13 +3,18 @@
  *
  * Web Crypto API（ブラウザ標準）を使用して以下を実装:
  *   - RSA-OAEP鍵ペア生成・保存・読み込み
- *   - AES-CBC暗号化・復号
+ *   - AES-GCM暗号化・復号（v2: CBC→GCMに変更。改ざん検知付き）
  *   - RSA-OAEPによるAES鍵の暗号化・復号
+ *   - PBKDF2によるRSA秘密鍵のバックアップ・復元（v2新機能）
  *
  * 設計方針:
- *   - 秘密鍵はlocalStorageのみに保存（サーバーには送らない）
+ *   - 秘密鍵はlocalStorageに保存し、さらにPBKDF2でバックアップ
  *   - 公開鍵はサーバーに登録し、誰でも取得可能
  *   - メッセージの暗号化・復号は全てこのファイルで完結
+ *
+ * v1からの変更点:
+ *   - AES-CBC → AES-GCM（IVが16byte→12byte、改ざん検知が追加）
+ *   - PBKDF2によるRSA秘密鍵の暗号化バックアップ機能を追加
  */
 
 // ================================================================
@@ -85,33 +90,37 @@ async function importPublicKey(publicKeyPem) {
 
 
 // ================================================================
-// AES-CBC 暗号化・復号
+// AES-GCM 暗号化・復号
+// v1のAES-CBCから変更:
+//   - IVサイズ: 16byte → 12byte（GCMの最適サイズ）
+//   - 改ざん検知タグが自動で付与されるためデータ改ざんを検知できる
+//   - TLS 1.3でも採用されている現代の標準
 // ================================================================
 
 /**
- * メッセージをAES-256-CBCで暗号化する。
+ * メッセージをAES-256-GCMで暗号化する。
  *
  * @param {string} plaintext - 平文メッセージ
  * @param {Uint8Array} aesKey - 32byteのAES鍵
- * @returns {string} Base64( IV[16byte] + 暗号文 )
+ * @returns {string} Base64( IV[12byte] + 暗号文+認証タグ )
  */
 async function aesEncrypt(plaintext, aesKey) {
-  const iv  = crypto.getRandomValues(new Uint8Array(16)); // ランダムIV
+  const iv  = crypto.getRandomValues(new Uint8Array(12)); // GCMは12byteが最適
   const key = await crypto.subtle.importKey(
     "raw", aesKey,
-    { name: "AES-CBC" },
+    { name: "AES-GCM" },  // v1: AES-CBC → v2: AES-GCM
     false,
     ["encrypt"]
   );
 
   const encoded   = new TextEncoder().encode(plaintext);
   const encrypted = await crypto.subtle.encrypt(
-    { name: "AES-CBC", iv },
+    { name: "AES-GCM", iv }, // GCMは認証タグ(16byte)を暗号文末尾に自動付与
     key,
     encoded
   );
 
-  // IV + 暗号文 を結合してBase64に変換
+  // IV + 暗号文（+認証タグ） を結合してBase64に変換
   const combined = new Uint8Array(iv.byteLength + encrypted.byteLength);
   combined.set(iv, 0);
   combined.set(new Uint8Array(encrypted), iv.byteLength);
@@ -120,26 +129,27 @@ async function aesEncrypt(plaintext, aesKey) {
 }
 
 /**
- * AES-256-CBCで暗号文を復号する。
+ * AES-256-GCMで暗号文を復号する。
  *
- * @param {string} encryptedBase64 - Base64( IV[16byte] + 暗号文 )
+ * @param {string} encryptedBase64 - Base64( IV[12byte] + 暗号文+認証タグ )
  * @param {Uint8Array} aesKey - 32byteのAES鍵
  * @returns {string} 復号された平文
  */
 async function aesDecrypt(encryptedBase64, aesKey) {
-  const combined = base64ToUint8(encryptedBase64);
-  const iv        = combined.slice(0, 16);
-  const ciphertext = combined.slice(16);
+  const combined   = base64ToUint8(encryptedBase64);
+  const iv         = combined.slice(0, 12);  // v1: 16byte → v2: 12byte
+  const ciphertext = combined.slice(12);
 
   const key = await crypto.subtle.importKey(
     "raw", aesKey,
-    { name: "AES-CBC" },
+    { name: "AES-GCM" },  // v1: AES-CBC → v2: AES-GCM
     false,
     ["decrypt"]
   );
 
+  // GCMは復号時に認証タグを自動検証する。改ざんされていれば例外を投げる
   const decrypted = await crypto.subtle.decrypt(
-    { name: "AES-CBC", iv },
+    { name: "AES-GCM", iv },
     key,
     ciphertext
   );
@@ -200,7 +210,7 @@ async function decryptAESKey(encryptedKeyBase64, privateKey) {
  *
  * 流れ:
  *   ① AES鍵（32byte）をランダム生成
- *   ② メッセージをAES-CBCで暗号化（content）
+ *   ② メッセージをAES-GCMで暗号化（content）
  *   ③ 同じAES鍵を受信者の公開鍵で暗号化（encrypted_key）
  *   ④ 同じAES鍵を送信者自身の公開鍵でも暗号化（encrypted_key_for_sender）
  *   ⑤ content / encrypted_key / encrypted_key_for_sender を返す
@@ -271,4 +281,104 @@ function uint8ToBase64(uint8) {
 
 function base64ToUint8(base64) {
   return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+}
+
+
+// ================================================================
+// PBKDF2 による RSA秘密鍵のバックアップ・復元（v2新機能）
+//
+// 目的: 機種変更・キャッシュ削除後も秘密鍵を復元できるようにする
+// 仕組み: ログインパスワードからAES鍵を派生させ、RSA秘密鍵を暗号化して
+//         サーバーに保存。サーバーはパスワードも派生鍵も知らない。
+// ================================================================
+
+/**
+ * ログインパスワードからRSA秘密鍵保護用のAES鍵を派生させる。
+ *
+ * @param {string} password    - ユーザーのログインパスワード
+ * @param {Uint8Array} salt    - ランダムなSalt（16byte）
+ * @returns {CryptoKey} AES-GCM用の鍵オブジェクト
+ */
+async function deriveKeyFromPassword(password, salt) {
+  const enc = new TextEncoder();
+
+  // パスワード文字列をPBKDF2用のKeyオブジェクトに変換
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+
+  // PBKDF2で10万回ハッシュ化し256bitのAES-GCM鍵を生成
+  // 10万回繰り返すことで総当たり攻撃を現実的でなくする
+  return await crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+/**
+ * RSA秘密鍵をログインパスワードから派生した鍵で暗号化する。
+ * 登録時に呼ばれ、暗号化済み秘密鍵をサーバーにバックアップする。
+ *
+ * @param {object} privateKeyJwk - JWK形式のRSA秘密鍵
+ * @param {string} password      - ユーザーのログインパスワード
+ * @returns {string} Base64( Salt[16byte] + IV[12byte] + 暗号文 )
+ */
+async function encryptPrivateKeyWithPassword(privateKeyJwk, password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16)); // ランダムSalt
+  const iv   = crypto.getRandomValues(new Uint8Array(12)); // ランダムIV
+
+  const key     = await deriveKeyFromPassword(password, salt);
+  const encoded = new TextEncoder().encode(JSON.stringify(privateKeyJwk));
+
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    encoded
+  );
+
+  // Salt + IV + 暗号文 を1つのBase64文字列にまとめて返す
+  // 復号時にSaltとIVが必要なため、暗号文と一緒に保存する
+  const combined = new Uint8Array(
+    salt.byteLength + iv.byteLength + encrypted.byteLength
+  );
+  combined.set(salt, 0);
+  combined.set(iv,   salt.byteLength);
+  combined.set(new Uint8Array(encrypted), salt.byteLength + iv.byteLength);
+
+  return uint8ToBase64(combined);
+}
+
+/**
+ * 暗号化されたRSA秘密鍵をログインパスワードで復号する。
+ * 機種変更後のログイン時に呼ばれ、秘密鍵を復元する。
+ *
+ * @param {string} encryptedBase64 - encryptPrivateKeyWithPasswordの戻り値
+ * @param {string} password        - ユーザーのログインパスワード
+ * @returns {object} JWK形式のRSA秘密鍵
+ */
+async function decryptPrivateKeyWithPassword(encryptedBase64, password) {
+  const combined = base64ToUint8(encryptedBase64);
+
+  // 先頭から順にSalt・IV・暗号文を切り出す
+  const salt       = combined.slice(0, 16);
+  const iv         = combined.slice(16, 28);
+  const ciphertext = combined.slice(28);
+
+  // 同じパスワード + 同じSalt → 必ず同じAES鍵が再現される
+  const key = await deriveKeyFromPassword(password, salt);
+
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    key,
+    ciphertext
+  );
+
+  return JSON.parse(new TextDecoder().decode(decrypted));
 }
