@@ -160,23 +160,23 @@
       keyInfo.textContent = '🔑 RSA-2048鍵ペアを生成中...';
 
       try {
-        // ① ブラウザ側でRSA鍵ペアを生成
+        // ブラウザ側でRSA鍵ペアを生成
         const { publicKeyPem, privateKeyJwk } = await generateRSAKeyPair();
 
         keyInfo.textContent = '💾 秘密鍵をこのデバイスに保存中...';
 
-        // ② 秘密鍵をlocalStorageに保存（サーバーには平文では送らない）
+        // 秘密鍵をlocalStorageに保存（サーバーには送らない）
         savePrivateKey(privateKeyJwk);
 
-        // ③ PBKDF2でRSA秘密鍵を暗号化（登録リクエストに含めるため事前に作成）
-        //    セッションなしでバックアップを完了させるために登録と同時に送る
+        // v2修正: PBKDF2暗号化を登録リクエストの前に実行
+        // 登録APIに encrypted_private_key を含めることで
+        // セッションなしでも確実にバックアップが保存される（スマホ対応）
         keyInfo.textContent = '🔒 秘密鍵をパスワードで暗号化中...';
         const encryptedBase64 = await encryptPrivateKeyWithPassword(privateKeyJwk, password);
 
         keyInfo.textContent = '📡 公開鍵をサーバーに登録中...';
 
-        // ④ 公開鍵・ユーザー情報・暗号化済み秘密鍵を一度に送信
-        //    セッション不要な登録APIで全て完結させる（スマホ対応のための修正）
+        // 公開鍵・ユーザー情報・暗号化済み秘密鍵を一度のリクエストで送信
         const res  = await fetch('/api/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
