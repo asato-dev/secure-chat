@@ -12,6 +12,7 @@ app.py - エンドツーエンド暗号化チャットアプリ
 
 v1からの変更点:
     - AES-CBC → AES-GCM（crypto.js側の変更）
+    - 登録時に encrypted_private_key も同時に保存するよう変更（v2）
     - /api/account/encrypted-key エンドポイントを追加（秘密鍵バックアップ用）
 """
 
@@ -26,7 +27,6 @@ import bcrypt
 import psycopg2
 import logging
 
-# ログ設定（エラーの記録）
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"
@@ -35,13 +35,11 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-#SECRET_KEY が設定されていない場合はアプリを起動しない
 _secret_key = os.environ.get("SECRET_KEY")
 if not _secret_key:
     raise RuntimeError("環境変数 SECRET_KEY が設定されていません。起動できません。")
 app.secret_key = _secret_key
 
-# セッションの有効期限を2時間に設定
 app.permanent_session_lifetime = timedelta(hours=2)
 
 with app.app_context():
@@ -98,13 +96,18 @@ def register():
     """
     ユーザー登録 API。
 
-    ブラウザ側で生成したRSA公開鍵も受け取ってDBに保存する。
-    秘密鍵はブラウザのlocalStorageのみに保存し、サーバーには送らない。
+    ブラウザ側で生成したRSA公開鍵と、PBKDF2で暗号化したRSA秘密鍵を
+    同時に受け取ってDBに保存する。
+    平文の秘密鍵はサーバーに送らない。
+
+    v2変更: encrypted_private_key を登録時に同時に保存することで
+    セッションなしでもバックアップが完了する。
     """
-    data       = request.get_json()
-    username   = data.get("username",   "").strip()
-    password   = data.get("password",   "").strip()
-    public_key = data.get("public_key", "").strip()
+    data                  = request.get_json()
+    username              = data.get("username",              "").strip()
+    password              = data.get("password",              "").strip()
+    public_key            = data.get("public_key",            "").strip()
+    encrypted_private_key = data.get("encrypted_private_key", "").strip()
 
     if not username or not password or not public_key:
         return jsonify({"error": "全ての項目を入力してください"}), 400
@@ -116,19 +119,12 @@ def register():
     try:
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO users (username, password, public_key) VALUES (%s, %s, %s) RETURNING id",
-            (username, hash_password(password), public_key)
+            "INSERT INTO users (username, password, public_key, encrypted_private_key)"
+            " VALUES (%s, %s, %s, %s)",
+            (username, hash_password(password), public_key, encrypted_private_key or None)
         )
-        new_user = cur.fetchone()
         conn.commit()
         cur.close()
-
-        # 登録直後にセッションを作成する
-        # これにより直後の /api/account/encrypted-key PUT が認証を通過できる
-        session.permanent = True
-        session["user_id"]  = new_user["id"]
-        session["username"] = username
-
         return jsonify({"message": "登録成功"})
     except psycopg2.errors.UniqueViolation:
         conn.rollback()
@@ -157,7 +153,6 @@ def login():
     if not user or not check_password(password, user["password"]):
         return jsonify({"error": "ユーザー名またはパスワードが違います"}), 401
 
-    #permanent=True でセッション有効期限を適用する
     session.permanent  = True
     session["user_id"]  = user["id"]
     session["username"] = user["username"]
@@ -177,10 +172,6 @@ def logout():
 @app.route("/api/users", methods=["GET"])
 @login_required
 def get_users():
-    """
-    自分以外のユーザー一覧を返す API。
-    チャット相手を選ぶために使用する。
-    """
     conn = get_db()
     cur  = conn.cursor()
     cur.execute(
@@ -196,12 +187,6 @@ def get_users():
 @app.route("/api/users/<int:user_id>/public-key", methods=["GET"])
 @login_required
 def get_public_key(user_id):
-    """
-    指定ユーザーのRSA公開鍵を返す API。
-
-    メッセージ送信時にブラウザが受信者の公開鍵を取得するために使用する。
-    公開鍵でAES鍵を暗号化し、受信者の秘密鍵でのみ復号できるようにする。
-    """
     conn = get_db()
     cur  = conn.cursor()
     cur.execute("SELECT public_key FROM users WHERE id=%s", (user_id,))
@@ -221,12 +206,6 @@ def get_public_key(user_id):
 @app.route("/api/messages/<int:partner_id>", methods=["GET"])
 @login_required
 def get_messages(partner_id):
-    """
-    指定ユーザーとの会話を取得する API。
-
-    サーバーは暗号化されたデータをそのまま返すだけ。
-    復号はブラウザ側でlocalStorageの秘密鍵を使って行う。
-    """
     conn = get_db()
     cur  = conn.cursor()
     cur.execute("""
@@ -270,17 +249,6 @@ def get_messages(partner_id):
 @app.route("/api/messages", methods=["POST"])
 @login_required
 def send_message():
-    """
-    メッセージ送信 API。
-
-    ブラウザ側で暗号化済みのデータを受け取ってDBに保存するだけ。
-    サーバーは平文を一切扱わない。
-
-    受け取るデータ:
-        receiver_id:   受信者のユーザーID
-        content:       AES-GCMで暗号化されたメッセージ本文
-        encrypted_key: 受信者の公開鍵でRSA暗号化されたAES鍵
-    """
     data                  = request.get_json()
     receiver_id           = data.get("receiver_id")
     content               = data.get("content",                "").strip()
@@ -306,7 +274,6 @@ def send_message():
 @app.route("/api/me", methods=["GET"])
 @login_required
 def get_me():
-    """現在ログイン中のユーザー情報を返す API。"""
     return jsonify({
         "id":       session["user_id"],
         "username": session["username"],
@@ -320,7 +287,6 @@ def get_me():
 @app.route("/api/account/username", methods=["PUT"])
 @login_required
 def change_username():
-    """ユーザー名を変更する API。"""
     data         = request.get_json()
     new_username = data.get("username", "").strip()
 
@@ -355,7 +321,6 @@ def change_username():
 @app.route("/api/account/password", methods=["PUT"])
 @login_required
 def change_password():
-    """パスワードを変更する API。"""
     data         = request.get_json()
     old_password = data.get("old_password", "").strip()
     new_password = data.get("new_password", "").strip()
@@ -395,10 +360,8 @@ def change_password():
 def save_encrypted_key():
     """
     ログインパスワードから派生した鍵で暗号化されたRSA秘密鍵を
-    サーバーに保存するAPI。（v2新機能）
-
+    サーバーに保存するAPI。パスワード変更時などに使用。
     サーバーはパスワードも派生鍵も知らないため、中身を読めない。
-    フォーマット: Base64( Salt[16byte] + IV[12byte] + 暗号文 )
     """
     data          = request.get_json()
     encrypted_key = data.get("encrypted_key", "").strip()
@@ -428,8 +391,7 @@ def save_encrypted_key():
 @login_required
 def get_encrypted_key():
     """
-    暗号化されたRSA秘密鍵をサーバーから取得するAPI。（v2新機能）
-
+    暗号化されたRSA秘密鍵をサーバーから取得するAPI。
     機種変更後のログイン時にブラウザが呼び出す。
     サーバーは暗号化されたデータを返すだけで中身は読めない。
     """
@@ -448,13 +410,6 @@ def get_encrypted_key():
 @app.route("/api/account", methods=["DELETE"])
 @login_required
 def delete_account():
-    """
-    自分のアカウントを削除する API。
-
-    users テーブルの CASCADE 設定により、
-    関連するメッセージも自動的に削除される。
-    削除後はセッションをクリアする。
-    """
     conn = get_db()
     try:
         cur = conn.cursor()
@@ -476,5 +431,4 @@ def delete_account():
 # ================================================================
 
 if __name__ == "__main__":
-    # host="0.0.0.0" で同じWi-Fi内の他デバイスからもアクセス可能
     app.run(host="0.0.0.0", debug=False, port=8080)
